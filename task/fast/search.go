@@ -1,62 +1,52 @@
 package fast
 
 import (
-	"encoding/json"
+	"bufio"
 	"fmt"
+	easyjson "github.com/mailru/easyjson"
 	"io"
-	"io/ioutil"
 	"os"
-	"regexp"
 	"strings"
 )
+
+type User struct {
+	Browsers []string
+	Email    string
+	Name     string
+}
 
 func Search(filePath string, out io.Writer) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		panic(err)
 	}
+	defer file.Close()
 
-	fileContents, err := ioutil.ReadAll(file)
-	if err != nil {
-		panic(err)
-	}
-
-	r := regexp.MustCompile("@")
 	seenBrowsers := []string{}
 	uniqueBrowsers := 0
-	foundUsers := ""
 
-	lines := strings.Split(string(fileContents), "\n")
-
-	users := make([]map[string]interface{}, 0)
-	for _, line := range lines {
-		user := make(map[string]interface{})
+	fmt.Fprintln(out, "found users:")
+	scanner := bufio.NewScanner(file)
+	for i := 0; scanner.Scan(); i++ {
+		line := scanner.Bytes()
+		user := &User{}
 		// fmt.Printf("%v %v\n", err, line)
-		err := json.Unmarshal([]byte(line), &user)
+
+		// easyjson -all -snake_case fast/search.go
+		// https://github.com/mailru/easyjson/issues/10
+		err := easyjson.Unmarshal(line, user)
+
 		if err != nil {
 			panic(err)
 		}
-		users = append(users, user)
-	}
-
-	for i, user := range users {
 
 		isAndroid := false
 		isMSIE := false
 
-		browsers, ok := user["browsers"].([]interface{})
-		if !ok {
-			// log.Println("cant cast browsers")
-			continue
-		}
+		browsers := user.Browsers
 
-		for _, browserRaw := range browsers {
-			browser, ok := browserRaw.(string)
-			if !ok {
-				// log.Println("cant cast browser to string")
-				continue
-			}
-			if ok, err := regexp.MatchString("Android", browser); ok && err == nil {
+		for _, browser := range browsers {
+			if strings.Contains(browser, "Android") {
 				isAndroid = true
 				notSeenBefore := true
 				for _, item := range seenBrowsers {
@@ -70,15 +60,8 @@ func Search(filePath string, out io.Writer) {
 					uniqueBrowsers++
 				}
 			}
-		}
 
-		for _, browserRaw := range browsers {
-			browser, ok := browserRaw.(string)
-			if !ok {
-				// log.Println("cant cast browser to string")
-				continue
-			}
-			if ok, err := regexp.MatchString("MSIE", browser); ok && err == nil {
+			if strings.Contains(browser, "MSIE") {
 				isMSIE = true
 				notSeenBefore := true
 				for _, item := range seenBrowsers {
@@ -99,10 +82,15 @@ func Search(filePath string, out io.Writer) {
 		}
 
 		// log.Println("Android and MSIE user:", user["name"], user["email"])
-		email := r.ReplaceAllString(user["email"].(string), " [at] ")
-		foundUsers += fmt.Sprintf("[%d] %s <%s>\n", i, user["name"], email)
+		email := strings.Replace(user.Email, "@", " [at] ", 1)
+
+		fmt.Fprintln(out, fmt.Sprintf("[%d] %s <%s>", i, user.Name, email))
 	}
 
-	fmt.Fprintln(out, "found users:\n"+foundUsers)
+	if err := scanner.Err(); err != nil {
+		panic(err)
+	}
+
+	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Total unique browsers", len(seenBrowsers))
 }
